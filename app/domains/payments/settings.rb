@@ -16,11 +16,11 @@ module Payments
     end
 
     def access_token
-      ENV["MERCADO_PAGO_ACCESS_TOKEN"]
+      ENV.fetch("MERCADO_PAGO_ACCESS_TOKEN", nil)
     end
 
     def webhook_secret
-      ENV["MERCADO_PAGO_WEBHOOK_SECRET"].presence
+      ENV.fetch("MERCADO_PAGO_WEBHOOK_SECRET", nil).presence
     end
   end
 end
