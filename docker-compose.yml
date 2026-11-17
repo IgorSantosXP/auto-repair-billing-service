@@ -1,0 +1,91 @@
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile.development
+  volumes:
+    - .:/rails
+    - bundle_data:/usr/local/bundle
+  environment: &app-env
+    RAILS_ENV: development
+    DB_HOST: db
+    JWT_SECRET: dev_secret_change_in_production
+    SERVICE_NAME: billing-service
+    SMTP_HOST: mailpit
+    SMTP_PORT: 1025
+    BILLING_PUBLIC_URL: http://localhost:3001
+    MERCADO_PAGO_MODE: ${MERCADO_PAGO_MODE:-fake}
+    MERCADO_PAGO_ACCESS_TOKEN: ${MERCADO_PAGO_ACCESS_TOKEN:-}
+    MERCADO_PAGO_WEBHOOK_SECRET: ${MERCADO_PAGO_WEBHOOK_SECRET:-}
+    FAKE_MERCADO_PAGO_REFUND_FAILS: ${FAKE_MERCADO_PAGO_REFUND_FAILS:-false}
+    AWS_REGION: us-east-1
+    AWS_ACCESS_KEY_ID: test
+    AWS_SECRET_ACCESS_KEY: test
+    AWS_ENDPOINT_URL: http://localstack:4566
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: billing_service_development
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  localstack:
+    image: localstack/localstack:4.4
+    environment:
+      SERVICES: sns,sqs
+      # Path-style queue URLs resolve inside the compose network.
+      SQS_ENDPOINT_STRATEGY: path
+      LOCALSTACK_HOST: localstack:4566
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.24
+    restart: always
+
+  api:
+    <<: *app
+    command: bash -c "bundle check || bundle install; rm -f tmp/pids/server.pid; bin/rails db:prepare && bin/rails server -b 0.0.0.0 -p 3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    ports:
+      - "${BILLING_PORT:-3001}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/up"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  worker:
+    <<: *app
+    command: bin/rails messaging:work
+    environment:
+      <<: *app-env
+      MESSAGING_AUTO_PROVISION: "true"
+      EVENTS_TOPIC_NAME: auto-repair-local-events
+      QUEUE_NAME: auto-repair-local-billing
+    depends_on:
+      api:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  bundle_data:

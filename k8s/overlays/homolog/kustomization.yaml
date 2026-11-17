@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: auto-repair-billing-homolog
+
+resources:
+  - ../../base
+  - namespace.yaml
+
+configMapGenerator:
+  - name: billing-config
+    literals:
+      - RAILS_ENV=production
+      - RAILS_LOG_TO_STDOUT=true
+      - DD_ENV=homolog
+      - DD_SERVICE=billing-service
+      - SERVICE_NAME=billing-service
+      - AWS_REGION=us-east-1
+      - SMTP_HOST=mailpit.auto-repair-homolog.svc.cluster.local
+      - SMTP_PORT=1025
+      - MAILER_FROM=orcamentos@autorepair.com
+      - EVENTS_TOPIC_ARN=arn:aws:sns:us-east-1:814623398856:auto-repair-homolog-events
+      - QUEUE_URL=https://sqs.us-east-1.amazonaws.com/814623398856/auto-repair-homolog-billing
+
+images:
+  - name: auto-repair-billing-service
+    newName: 814623398856.dkr.ecr.us-east-1.amazonaws.com/auto-repair-billing-service
+    newTag: latest

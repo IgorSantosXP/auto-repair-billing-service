@@ -1,0 +1,15 @@
+Olá, <%= @budget.customer_name %>!
+
+O orçamento da sua ordem de serviço <%= @budget.service_order_uuid %> está pronto.
+
+<% @budget.items.sort_by(&:id).each do |item| -%>
+- <%= item.name %>: <%= item.quantity %> x <%= number_to_currency(item.unit_price_cents / 100.0, unit: "R$ ", separator: ",", delimiter: ".") %> = <%= number_to_currency(item.total_cents / 100.0, unit: "R$ ", separator: ",", delimiter: ".") %>
+<% end -%>
+
+Total: <%= number_to_currency(@budget.total_cents / 100.0, unit: "R$ ", separator: ",", delimiter: ".") %>
+
+Os links abaixo são válidos por 72 horas:
+Aprovar: <%= @approval_link %>
+Recusar: <%= @rejection_link %>
+
+Obrigado por escolher a nossa oficina!

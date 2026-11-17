@@ -1,0 +1,49 @@
+# Saga participant worker: consumes commands from the billing SQS queue and
+# relays the PostgreSQL outbox to SNS.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  labels:
+    app: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+        tags.datadoghq.com/service: billing-service
+      annotations:
+        ad.datadoghq.com/worker.logs: '[{"source":"ruby","service":"billing-service"}]'
+    spec:
+      serviceAccountName: billing-service
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: worker
+          image: auto-repair-billing-service
+          imagePullPolicy: Always
+          command: ["./bin/rails", "messaging:work"]
+          env:
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          envFrom:
+            - configMapRef:
+                name: billing-config
+            - secretRef:
+                name: billing-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 250m
+              memory: 512Mi

@@ -1,0 +1,20 @@
+# Creates the environment database (if needed) and runs the migrations before rollout.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: auto-repair-billing-service
+          command: ["./bin/rails", "db:prepare"]
+          envFrom:
+            - configMapRef:
+                name: billing-config
+            - secretRef:
+                name: billing-secrets

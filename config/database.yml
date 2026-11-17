@@ -1,0 +1,22 @@
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  max_connections: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+
+local: &local
+  host: <%= ENV.fetch("DB_HOST", "db") %>
+  username: <%= ENV.fetch("POSTGRES_USER", "postgres") %>
+  password: <%= ENV.fetch("POSTGRES_PASSWORD", "postgres") %>
+
+development:
+  <<: [*default, *local]
+  database: billing_service_development
+
+test:
+  <<: [*default, *local]
+  database: billing_service_test
+
+production:
+  primary:
+    <<: *default
+    url: <%= ENV["DATABASE_URL"] %>

@@ -1,0 +1,250 @@
+name: CI/CD
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches: [main, homolog]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE: arn:aws:iam::814623398856:role/auto-repair-github-actions
+  ECR_REPOSITORY: auto-repair-billing-service
+  EKS_CLUSTER: auto-repair-eks
+
+jobs:
+  security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - name: Lint
+        run: bin/rubocop
+
+      - name: Scan for Rails security vulnerabilities
+        run: bin/brakeman --no-pager
+
+      - name: Scan for vulnerable gems
+        run: bin/bundler-audit
+
+  test:
+    runs-on: ubuntu-24.04
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: --health-cmd="pg_isready" --health-interval=10s --health-timeout=5s --health-retries=5
+
+    env:
+      RAILS_ENV: test
+      DB_HOST: localhost
+      JWT_SECRET: ci_test_secret_do_not_use_in_production
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - name: Prepare database
+        run: bin/rails db:prepare
+
+      - name: Unit and request tests (RSpec, coverage >= 80%)
+        run: bundle exec rspec --format progress
+
+      - name: BDD scenarios (Cucumber)
+        run: bundle exec cucumber --profile ci
+
+      - name: Coverage summary
+        run: |
+          COVERED=$(jq '.result.line' coverage/.last_run.json)
+          echo "### Coverage: ${COVERED}%" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: |
+            coverage/
+            tmp/cucumber.html
+          include-hidden-files: true
+
+  quality:
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-reports
+
+      - name: SonarQube Cloud analysis
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Quality gate
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  manifests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate kustomize overlays
+        run: |
+          kubectl kustomize k8s/overlays/prod > /dev/null
+          kubectl kustomize k8s/overlays/homolog > /dev/null
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+
+      - name: Validate terraform
+        working-directory: terraform
+        run: |
+          terraform fmt -check
+          terraform init -backend=false -input=false
+          terraform validate
+
+  # Runs only while the AWS environment is up (repository variable
+  # DEPLOY_ENABLED=true); re-run anytime with "Run workflow".
+  deploy:
+    needs: [security, test, quality, manifests]
+    if: github.event_name != 'pull_request' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'homolog' }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve target environment
+        id: env
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "name=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=homolog" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.AWS_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+
+      - name: Provision RDS PostgreSQL, SQS queue and Pod Identity
+        working-directory: terraform
+        run: |
+          terraform init -input=false
+          terraform apply -input=false -auto-approve
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -f Dockerfile.production \
+            -t "$REGISTRY/$ECR_REPOSITORY:$TAG" \
+            -t "$REGISTRY/$ECR_REPOSITORY:${{ steps.env.outputs.name }}" .
+          docker push "$REGISTRY/$ECR_REPOSITORY:$TAG"
+          docker push "$REGISTRY/$ECR_REPOSITORY:${{ steps.env.outputs.name }}"
+
+      - name: Configure kubectl
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER"
+
+      - name: Create namespace and secrets
+        env:
+          NAMESPACE: auto-repair-billing-${{ steps.env.outputs.name }}
+          MP_ACCESS_TOKEN: ${{ secrets.MERCADO_PAGO_ACCESS_TOKEN }}
+          MP_WEBHOOK_SECRET: ${{ secrets.MERCADO_PAGO_WEBHOOK_SECRET }}
+        run: |
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+          SECRET=$(aws secretsmanager get-secret-value --secret-id auto-repair/app --query SecretString --output text)
+          JWT=$(echo "$SECRET" | jq -r .jwt_secret)
+
+          BILLING=$(aws secretsmanager get-secret-value --secret-id auto-repair/billing --query SecretString --output text)
+          DB_HOST=$(echo "$BILLING" | jq -r .host)
+          DB_PORT=$(echo "$BILLING" | jq -r .port)
+          DB_USER=$(echo "$BILLING" | jq -r .username)
+          DB_PASS=$(echo "$BILLING" | jq -r .password)
+
+          # Public base URL for the approval and payment links sent by email.
+          GATEWAY=$(aws apigatewayv2 get-apis \
+            --query "Items[?Name=='auto-repair-api'].ApiEndpoint | [0]" --output text)
+
+          # Mercado Pago: repository secrets win; otherwise fall back to the
+          # values in Secrets Manager (fake mode by default).
+          MP_MODE=$(echo "$BILLING" | jq -r .mercado_pago_mode)
+          MP_TOKEN=${MP_ACCESS_TOKEN:-$(echo "$BILLING" | jq -r .mercado_pago_access_token)}
+          MP_WEBHOOK=${MP_WEBHOOK_SECRET:-$(echo "$BILLING" | jq -r .mercado_pago_webhook_secret)}
+          if [ -n "$MP_ACCESS_TOKEN" ]; then MP_MODE=live; fi
+
+          kubectl -n "$NAMESPACE" create secret generic billing-secrets \
+            --from-literal=DATABASE_URL="postgres://$DB_USER:$DB_PASS@$DB_HOST:$DB_PORT/billing_${{ steps.env.outputs.name }}?sslmode=require" \
+            --from-literal=JWT_SECRET="$JWT" \
+            --from-literal=SECRET_KEY_BASE="$JWT" \
+            --from-literal=BILLING_PUBLIC_URL="$GATEWAY" \
+            --from-literal=APP_HOST="${GATEWAY#https://}" \
+            --from-literal=MERCADO_PAGO_MODE="$MP_MODE" \
+            --from-literal=MERCADO_PAGO_ACCESS_TOKEN="$MP_TOKEN" \
+            --from-literal=MERCADO_PAGO_WEBHOOK_SECRET="$MP_WEBHOOK" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          NAMESPACE: auto-repair-billing-${{ steps.env.outputs.name }}
+          OVERLAY: k8s/overlays/${{ steps.env.outputs.name }}
+        run: |
+          sed -i "s|newName: .*|newName: $REGISTRY/$ECR_REPOSITORY|" "$OVERLAY/kustomization.yaml"
+          sed -i "s|newTag: .*|newTag: ${{ github.sha }}|" "$OVERLAY/kustomization.yaml"
+
+          kubectl -n "$NAMESPACE" delete job db-migrate --ignore-not-found
+          kubectl apply -k "$OVERLAY"
+
+          kubectl -n "$NAMESPACE" wait --for=condition=complete job/db-migrate --timeout=300s
+          kubectl -n "$NAMESPACE" rollout status deployment/api --timeout=300s
+          kubectl -n "$NAMESPACE" rollout status deployment/worker --timeout=300s
+
+      - name: Smoke test
+        if: steps.env.outputs.name == 'prod'
+        run: |
+          GATEWAY=$(aws apigatewayv2 get-apis \
+            --query "Items[?Name=='auto-repair-api'].ApiEndpoint | [0]" --output text)
+          # Unauthenticated call routed by the gateway to this service must be rejected by the app.
+          for i in $(seq 1 10); do
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$GATEWAY/api/v1/budgets")
+            [ "$STATUS" = "401" ] && echo "Billing Service is responding through the API Gateway" && exit 0
+            sleep 5
+          done
+          echo "Unexpected status $STATUS" && exit 1

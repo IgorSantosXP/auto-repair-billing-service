@@ -1,0 +1,228 @@
+---
+openapi: 3.0.1
+info:
+  title: Billing Service API
+  version: v1
+  description: Orçamentos e pagamentos da oficina (Billing Service)
+paths:
+  "/api/v1/budgets":
+    get:
+      summary: Lists budgets (admin)
+      tags:
+      - Budgets
+      security:
+      - bearerAuth: []
+      parameters:
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: filtered by status
+        '401':
+          description: missing or invalid token
+  "/api/v1/budgets/{service_order_uuid}":
+    parameters:
+    - name: service_order_uuid
+      in: path
+      format: uuid
+      required: true
+      schema:
+        type: string
+    - name: token
+      in: query
+      required: false
+      description: Token do link enviado por e-mail
+      schema:
+        type: string
+    get:
+      summary: Shows a budget (admin, owning customer or e-mail token)
+      tags:
+      - Budgets
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: valid e-mail token
+        '401':
+          description: no credentials
+        '403':
+          description: another customer
+        '404':
+          description: unknown budget
+  "/api/v1/budgets/{service_order_uuid}/approve":
+    parameters:
+    - name: service_order_uuid
+      in: path
+      format: uuid
+      required: true
+      schema:
+        type: string
+    - name: token
+      in: query
+      required: false
+      schema:
+        type: string
+    post:
+      summary: Approves a budget (POST)
+      tags:
+      - Budgets
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: approve with the owning customer's JWT
+        '401':
+          description: admin token is not accepted
+        '403':
+          description: another customer
+        '404':
+          description: unknown budget
+        '422':
+          description: budget is not pending approval
+    get:
+      summary: Approves a budget (GET)
+      tags:
+      - Budgets
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: approve with the owning customer's JWT
+        '401':
+          description: admin token is not accepted
+        '403':
+          description: another customer
+        '404':
+          description: unknown budget
+        '422':
+          description: budget is not pending approval
+  "/api/v1/budgets/{service_order_uuid}/reject":
+    parameters:
+    - name: service_order_uuid
+      in: path
+      format: uuid
+      required: true
+      schema:
+        type: string
+    - name: token
+      in: query
+      required: false
+      schema:
+        type: string
+    post:
+      summary: Rejects a budget (POST)
+      tags:
+      - Budgets
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: reject with the owning customer's JWT
+        '401':
+          description: admin token is not accepted
+        '403':
+          description: another customer
+        '404':
+          description: unknown budget
+        '422':
+          description: budget is not pending approval
+    get:
+      summary: Rejects a budget (GET)
+      tags:
+      - Budgets
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: reject with the owning customer's JWT
+        '401':
+          description: admin token is not accepted
+        '403':
+          description: another customer
+        '404':
+          description: unknown budget
+        '422':
+          description: budget is not pending approval
+  "/api/v1/payments/{service_order_uuid}/simulate":
+    parameters:
+    - name: service_order_uuid
+      in: path
+      format: uuid
+      required: true
+      schema:
+        type: string
+    post:
+      summary: Simulates the payment provider notification (fake mode only, admin)
+      tags:
+      - Payments
+      security:
+      - bearerAuth: []
+      parameters: []
+      responses:
+        '200':
+          description: rejected
+        '401':
+          description: without admin token
+        '404':
+          description: outside fake mode
+        '422':
+          description: invalid status
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum:
+                  - approved
+                  - rejected
+              required:
+              - status
+  "/webhooks/mercadopago":
+    post:
+      summary: Receives Mercado Pago payment notifications
+      tags:
+      - Webhooks
+      parameters: []
+      responses:
+        '200':
+          description: duplicate notifications do nothing
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  example: payment
+                data:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas: {}
+servers:
+- url: "/"
+  description: Current host
