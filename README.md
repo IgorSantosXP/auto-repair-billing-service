@@ -1,5 +1,9 @@
 # Auto Repair Billing Service
 
+[![CI/CD](https://github.com/IgorSantosXP/auto-repair-billing-service/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/IgorSantosXP/auto-repair-billing-service/actions/workflows/ci.yml)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=IgorSantosXP_auto-repair-billing-service&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=IgorSantosXP_auto-repair-billing-service)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=IgorSantosXP_auto-repair-billing-service&metric=coverage)](https://sonarcloud.io/component_measures?id=IgorSantosXP_auto-repair-billing-service&metric=coverage)
+
 Microsserviço de **orçamentos e pagamentos** da oficina mecânica (FIAP SOAT, fase 4). Faz parte da saga orquestrada
 pelo OS Service: recebe comandos, executa a regra de negócio e responde com eventos.
 
