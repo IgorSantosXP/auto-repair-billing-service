@@ -1,0 +1,32 @@
+<h2>Olá, <%= @budget.customer_name %>!</h2>
+
+<p>
+  O orçamento da sua ordem de serviço <strong><%= @budget.service_order_uuid %></strong>
+  <% vehicle = @budget.vehicle || {} %>
+  <% if vehicle["brand"].present? %>
+    para o veículo <strong><%= vehicle["brand"] %> <%= vehicle["model"] %> (<%= vehicle["license_plate"] %>)</strong>
+  <% end %>
+  está pronto.
+</p>
+
+<table cellpadding="6" style="border-collapse: collapse;">
+  <tr><th align="left">Item</th><th>Qtd</th><th align="right">Valor unitário</th><th align="right">Total</th></tr>
+  <% @budget.items.sort_by(&:id).each do |item| %>
+    <tr>
+      <td><%= item.name %></td>
+      <td align="center"><%= item.quantity %></td>
+      <td align="right"><%= number_to_currency(item.unit_price_cents / 100.0, unit: "R$ ", separator: ",", delimiter: ".") %></td>
+      <td align="right"><%= number_to_currency(item.total_cents / 100.0, unit: "R$ ", separator: ",", delimiter: ".") %></td>
+    </tr>
+  <% end %>
+</table>
+
+<p>Total: <strong><%= number_to_currency(@budget.total_cents / 100.0, unit: "R$ ", separator: ",", delimiter: ".") %></strong></p>
+
+<p>
+  Os links abaixo são válidos por 72 horas:<br>
+  <a href="<%= @approval_link %>">Aprovar o orçamento</a><br>
+  <a href="<%= @rejection_link %>">Recusar o orçamento</a>
+</p>
+
+<p>Obrigado por escolher a nossa oficina!</p>

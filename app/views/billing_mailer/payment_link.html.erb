@@ -1,0 +1,10 @@
+<h2>Olá, <%= @budget.customer_name %>!</h2>
+
+<p>
+  Seu orçamento da ordem de serviço <strong><%= @budget.service_order_uuid %></strong> foi aprovado.
+  Valor a pagar: <strong><%= number_to_currency(@budget.total_cents / 100.0, unit: "R$ ", separator: ",", delimiter: ".") %></strong>.
+</p>
+
+<p><a href="<%= @payment_url %>">Pagar agora</a></p>
+
+<p>Obrigado por escolher a nossa oficina!</p>

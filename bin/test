@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Runs the suite inside the dev container: docker compose -p billing run --rm -e RAILS_ENV=test api bin/test
+set -e
+bin/rails db:prepare
+exec bundle exec rspec "$@"
